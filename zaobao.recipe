@@ -65,7 +65,7 @@ class ZAOBAO(BasicNewsRecipe):
     # 添加更多配置以提高抓取成功率
     publication_type = 'newspaper'
     oldest_article = 7
-    max_articles_per_feed = 10  # 每个板块最多20篇文章
+    max_articles_per_feed = 20  # 每个板块最多20篇文章
     auto_cleanup = True
 
     def parse_index(self):
