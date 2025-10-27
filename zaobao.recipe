@@ -5,6 +5,7 @@ zaobao.com.sg
 '''
 
 from calibre.web.feeds.news import BasicNewsRecipe, classes
+from urllib.parse import urljoin
 
 
 class ZAOBAO(BasicNewsRecipe):
@@ -19,40 +20,60 @@ class ZAOBAO(BasicNewsRecipe):
     )
     remove_javascript = True
     ignore_duplicate_articles = {'url'}
-    remove_attributes = ['width', 'height', 'style']
+    remove_attributes = ['width', 'height', 'style', 'data-*']
     resolve_internal_links = True
     remove_empty_feeds = True
 
     extra_css = '''
         .calibre-nuked-tag-figcaption {font-size:small; text-align:center; }
-        img {display:block; margin:0 auto;}
+        img {display:block; margin:0 auto; max-width: 100%;}
+        .article-body { line-height: 1.6; }
     '''
 
     def get_cover_url(self):
-        soup = self.index_to_soup(
-            'https://frontpages.freedomforum.org/newspapers/sing_lz-Lianhe_Zaobao'
-        )
-        return soup.find(
-            'img',
-            attrs={
-                'alt': 'Front Page Image',
-                'src': lambda x: x and x.endswith('front-page-large.jpg'),
-            },
-        )['src'].replace('-large', '-medium')
+        try:
+            soup = self.index_to_soup(
+                'https://frontpages.freedomforum.org/newspapers/sing_lz-Lianhe_Zaobao'
+            )
+            img_tag = soup.find(
+                'img',
+                attrs={
+                    'alt': 'Front Page Image',
+                    'src': lambda x: x and x.endswith('front-page-large.jpg'),
+                },
+            )
+            if img_tag:
+                return img_tag['src'].replace('-large', '-medium')
+        except Exception:
+            pass
+        # 备用封面
+        return 'https://static.zaobao.com.sg/s3fs-public/2023/08/zaobao-logo.jpg'
 
+    # 修复：使用正确的选择器来保留文章内容
     keep_only_tags = [
-        dict(name='article', attrs={'class': 'max-w-full'}),
+        dict(name='div', attrs={'class': ['story__content', 'article-body', 'article-content']}),
+        dict(name='article'),
     ]
 
-    remove_tags_after = [classes('articleBody')]
+    # 修复：移除错误的 remove_tags_after
+    # remove_tags_after = [classes('articleBody')]  # 原代码错误，已移除
 
-    remove_tags = [classes('bff-google-ad bff-recommend-article')]
+    remove_tags = [
+        classes('bff-google-ad'),
+        classes('bff-recommend-article'),
+        dict(name=['aside', 'nav', 'footer', 'script', 'style', 'div'], 
+             attrs={'class': ['advertisement', 'ad-container', 'google-ads', 'related-articles', 'share-tools']}),
+    ]
+
+    # 添加更多配置以提高抓取成功率
+    publication_type = 'newspaper'
+    oldest_article = 7
+    max_articles_per_feed = 30
+    auto_cleanup = True
 
     def parse_index(self):
         index = 'https://www.zaobao.com.sg'
         sections = ['realtime', 'news', 'forum', 'wencui', 'lifestyle', 'entertainment']
-
-        soup = self.index_to_soup(index)
 
         feeds = []
 
@@ -60,23 +81,49 @@ class ZAOBAO(BasicNewsRecipe):
             sectn = sec.capitalize()
             self.log(sectn)
 
-            articles = []
+            # 为每个板块单独获取页面
+            section_url = f"{index}/{sec}"
+            try:
+                soup = self.index_to_soup(section_url)
+            except Exception as e:
+                self.log(f"无法获取板块 {sec}，跳过: {e}")
+                continue
 
-            for a in soup.findAll(
+            articles = []
+            url_set = set()  # 防止重复文章
+
+            # 修复：使用更灵活的选择器查找文章链接
+            for a in soup.find_all(
                 'a',
-                attrs={
-                    'class': 'article-type-link',
-                    'href': lambda x: x and x.startswith('/' + sec),
-                },
+                href=lambda x: x and x.startswith(f'/{sec}/') and x != f'/{sec}'
             ):
-                if a.find('img'):
+                # 跳过包含图片的链接（通常是推荐或广告）
+                if a.find('img') or 'video' in a.get('href', '') or 'gallery' in a.get('href', ''):
                     continue
-                title = self.tag_to_string(a)
-                url = index + a['href']
-                if url == index + '/' + sec:
+                
+                title_elem = a.find(['h1', 'h2', 'h3', 'span', 'div'])
+                title = self.tag_to_string(title_elem) if title_elem else self.tag_to_string(a)
+                title = title.strip()
+                
+                if not title:
                     continue
-                self.log('\t', title, '\n\t\t', url)
+                
+                # 使用 urljoin 处理相对链接
+                url = urljoin(index, a['href'])
+                
+                # 避免重复
+                if url in url_set:
+                    continue
+                url_set.add(url)
+                
+                self.log(f'\t{title} -> {url}')
                 articles.append({'title': title, 'url': url})
+            
+            # 限制每板块文章数量
             if articles:
-                feeds.append((sectn, articles))
+                feeds.append((sectn, articles[:self.max_articles_per_feed]))
+        
         return feeds
+
+
+
