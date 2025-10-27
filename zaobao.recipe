@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 '''
-zaobao.com.sg
+zaobao.com.sg - 仅获取中国和国际板块
 '''
 
 from calibre.web.feeds.news import BasicNewsRecipe, classes
@@ -9,9 +9,9 @@ from urllib.parse import urljoin
 
 
 class ZAOBAO(BasicNewsRecipe):
-    title = '联合早报'
+    title = '联合早报 - 中国与国际'
     __author__ = 'unkn0wn'
-    description = '联合早报 是全球华文用户信任的媒体，每天即时为你提供国际最新新闻和热门新闻。从财经、体育、生活娱乐资讯到评论分析，尽在zaobao.com.sg。'
+    description = '联合早报 - 仅获取中国和国际新闻，包括即时和新闻板块'
     no_stylesheets = True
     language = 'zh'
     encoding = 'utf-8'
@@ -55,9 +55,6 @@ class ZAOBAO(BasicNewsRecipe):
         dict(name='article'),
     ]
 
-    # 修复：移除错误的 remove_tags_after
-    # remove_tags_after = [classes('articleBody')]  # 原代码错误，已移除
-
     remove_tags = [
         classes('bff-google-ad'),
         classes('bff-recommend-article'),
@@ -68,34 +65,43 @@ class ZAOBAO(BasicNewsRecipe):
     # 添加更多配置以提高抓取成功率
     publication_type = 'newspaper'
     oldest_article = 7
-    max_articles_per_feed = 30
+    max_articles_per_feed = 10  # 每个板块最多20篇文章
     auto_cleanup = True
 
     def parse_index(self):
         index = 'https://www.zaobao.com.sg'
-        sections = ['realtime', 'news', 'forum', 'wencui', 'lifestyle', 'entertainment']
+        
+        # 只获取你指定的4个板块
+        sections = [
+            ('中国即时', f'{index}/realtime/china'),
+            ('国际即时', f'{index}/realtime/world'),
+            ('中国新闻', f'{index}/news/china'),
+            ('国际新闻', f'{index}/news/world'),
+        ]
 
         feeds = []
 
-        for sec in sections:
-            sectn = sec.capitalize()
-            self.log(sectn)
-
-            # 为每个板块单独获取页面
-            section_url = f"{index}/{sec}"
+        for section_name, section_url in sections:
+            self.log(f"正在获取: {section_name}")
+            
             try:
                 soup = self.index_to_soup(section_url)
             except Exception as e:
-                self.log(f"无法获取板块 {sec}，跳过: {e}")
+                self.log(f"无法获取板块 {section_name}，跳过: {e}")
                 continue
 
             articles = []
             url_set = set()  # 防止重复文章
 
-            # 修复：使用更灵活的选择器查找文章链接
+            # 查找文章链接 - 使用更灵活的选择器
             for a in soup.find_all(
                 'a',
-                href=lambda x: x and x.startswith(f'/{sec}/') and x != f'/{sec}'
+                href=lambda x: x and (
+                    x.startswith('/realtime/china/') or 
+                    x.startswith('/realtime/world/') or 
+                    x.startswith('/news/china/') or 
+                    x.startswith('/news/world/')
+                )
             ):
                 # 跳过包含图片的链接（通常是推荐或广告）
                 if a.find('img') or 'video' in a.get('href', '') or 'gallery' in a.get('href', ''):
@@ -121,7 +127,7 @@ class ZAOBAO(BasicNewsRecipe):
             
             # 限制每板块文章数量
             if articles:
-                feeds.append((sectn, articles[:self.max_articles_per_feed]))
+                feeds.append((section_name, articles[:self.max_articles_per_feed]))
         
         return feeds
 
